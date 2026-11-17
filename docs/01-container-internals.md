@@ -50,3 +50,14 @@ Test: a 50 MB limit on the hand-built container, then a process that keeps growi
 - `dmesg` showed `constraint=CONSTRAINT_MEMCG`, which means a cgroup limit was hit, not a whole-node out-of-memory event.
 
 Kubernetes mapping: `limits.memory` becomes `memory.max`, and `limits.cpu` becomes `cpu.max`.
+
+## A real container, taken apart (containerd 2.2)
+
+    sudo ctr run -d --memory-limit 52428800 docker.io/library/alpine:latest box2 sleep 3600
+
+- **Process chain:** `containerd-shim-runc-v2` is the parent of the container process, and the shim's parent is PID 1, not containerd. Restarting containerd does not kill running containers. runc sets up namespaces and cgroups, starts the process, then exits.
+- **Namespaces:** new pid, mnt, net, uts and ipc. Shared with the host: user (root inside is root on the host) and time (containers use the host clock).
+- **Files:** overlayfs. `lowerdir` holds the read-only image layers, shared by every container from that image. `upperdir` is the container's own writable layer.
+- **cgroup:** `/sys/fs/cgroup/default/box2/memory.max` holds the 52428800 limit. `default` is a containerd namespace. Kubernetes uses the `k8s.io` containerd namespace, so on a node use `ctr -n k8s.io`.
+- **Exec:** `nsenter -t <PID> -a sh` joins every namespace of a running container. That is what `kubectl exec` does underneath.
+- **Hostname:** a new UTS namespace starts as a copy of the host's hostname. Kubernetes sets it to the pod name.
