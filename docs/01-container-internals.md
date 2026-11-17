@@ -35,3 +35,18 @@ A container image is a folder holding a small Linux filesystem. I used Alpine's 
 - Inside: Alpine files, `/bin/sh` as PID 1, its own hostname, only a loopback interface that is down.
 - From the host: the hostname is unchanged, the container's `/proc` mount is invisible, and the shell runs under a normal host PID.
 - Real runtimes such as runc use `pivot_root` instead of `chroot`, because a root process can escape a chroot.
+
+## cgroups: how much a process can use
+
+cgroups (v2) live under `/sys/fs/cgroup`. Every folder is a group. Creating a group is `mkdir`, setting a limit is writing to a file, and a process joins by writing its PID to `cgroup.procs`. Children inherit the group.
+
+Test: a 50 MB limit on the hand-built container, then a process that keeps growing.
+
+    echo 50M > /sys/fs/cgroup/box1/memory.max
+    echo 0   > /sys/fs/cgroup/box1/memory.swap.max
+
+- The kernel killed the process at about 49 MB. The container's PID 1 survived because it stayed small.
+- `memory.events` showed `max 34`, `oom 1`, `oom_kill 1`. Kubernetes reads `oom_kill` to mark a pod `OOMKilled`, and the process exits with code 137 (128 plus SIGKILL).
+- `dmesg` showed `constraint=CONSTRAINT_MEMCG`, which means a cgroup limit was hit, not a whole-node out-of-memory event.
+
+Kubernetes mapping: `limits.memory` becomes `memory.max`, and `limits.cpu` becomes `cpu.max`.
